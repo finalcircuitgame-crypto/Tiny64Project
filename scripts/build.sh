@@ -41,8 +41,8 @@ ENTRY_OBJ="$BIN/entry.o"
 gcc $GCC_FLAGS "$ENTRY_SRC" -o "$ENTRY_OBJ"
 OBJ_FILES+=("$ENTRY_OBJ")
 
-# 2.2 Compile graphics.c, font.c, and memory.c in kernel explicitly
-for src in "$SRC_KERNEL/graphics.c" "$SRC_KERNEL/font.c" "$SRC_KERNEL/memory.c"; do
+# 2.2 Compile graphics.c, font.c, memory.c, fs.c, string.c, ttf.c, and inter_font_data.c in kernel explicitly
+for src in "$SRC_KERNEL/graphics.c" "$SRC_KERNEL/font.c" "$SRC_KERNEL/memory.c" "$SRC_KERNEL/fs.c" "$SRC_KERNEL/string.c" "$SRC_KERNEL/ttf.c" "$SRC_KERNEL/inter_font_data.c"; do
     obj="$BIN/$(basename "$src" .c).o"
     gcc $GCC_FLAGS "$src" -o "$obj"
     OBJ_FILES+=("$obj")
@@ -55,8 +55,8 @@ function add_objs_from_dir_exclude() {
     for src in $(find "$dir" -maxdepth 1 -type f \( -name "*.c" -o -name "*.S" -o -name "*.s" \) | sort); do
         # Skip entry.S if requested
         [[ "$filter_entry" = "yes" && "$(basename "$src")" == "entry.S" ]] && continue
-        # Skip kernel/recovery.c, graphics.c, font.c, and memory.c for main kernel
-        if [[ "$dir" == "$SRC_KERNEL" && ( "$(basename "$src")" == "recovery.c" || "$(basename "$src")" == "graphics.c" || "$(basename "$src")" == "font.c" || "$(basename "$src")" == "memory.c" ) ]]; then continue; fi
+        # Skip kernel/recovery.c, graphics.c, font.c, memory.c, fs.c, string.c, ttf.c, and inter_font_data.c for main kernel
+        if [[ "$dir" == "$SRC_KERNEL" && ( "$(basename "$src")" == "recovery.c" || "$(basename "$src")" == "graphics.c" || "$(basename "$src")" == "font.c" || "$(basename "$src")" == "memory.c" || "$(basename "$src")" == "fs.c" || "$(basename "$src")" == "string.c" || "$(basename "$src")" == "ttf.c" || "$(basename "$src")" == "inter_font_data.c" ) ]]; then continue; fi
         # Skip hal/serial.c for main kernel (compiled separately)
         if [[ "$dir" == "$SRC_HAL" && "$(basename "$src")" == "serial.c" ]]; then continue; fi
         obj="$BIN/$(basename "$src" | sed 's/\.\w\+$/.o/')"
@@ -83,7 +83,7 @@ ld -T "$SRC_KERNEL/link_kernel.ld" -o "$BIN/kernel.elf" "${OBJ_FILES[@]}"
 objcopy -O binary "$BIN/kernel.elf" "$ISO/kernel.t64"
 
 # --- 4. Build Recovery Kernel (Only recovery.c + all HAL/drivers + entry.o) ---
-echo "[3] Compiling Recovery Kernel..."
+echo "[4] Compiling Recovery Kernel (without TTF support)..."
 
 OBJ_RECOVERY=()
 OBJ_RECOVERY+=("$ENTRY_OBJ")
@@ -100,18 +100,23 @@ done
 # KERNEL: recovery.c + graphics functions (needed for kprint)
 RECOVERY_C="$SRC_KERNEL/recovery.c"
 RECOVERY_OBJ="$BIN/recovery.o"
-gcc $GCC_FLAGS "$RECOVERY_C" -o "$RECOVERY_OBJ"
+gcc $GCC_FLAGS -DRECOVERY_KERNEL "$RECOVERY_C" -o "$RECOVERY_OBJ"
 OBJ_RECOVERY+=("$RECOVERY_OBJ")
 
-# Add graphics.o for kprint function
+# Add graphics.o for kprint function (exclude TTF for recovery)
 GRAPHICS_OBJ="$BIN/recovery_graphics.o"
-gcc $GCC_FLAGS "$SRC_KERNEL/graphics.c" -o "$GRAPHICS_OBJ"
+gcc $GCC_FLAGS -DRECOVERY_KERNEL "$SRC_KERNEL/graphics.c" -o "$GRAPHICS_OBJ"
 OBJ_RECOVERY+=("$GRAPHICS_OBJ")
 
 # Add serial.o for serial output
 SERIAL_RECOVERY_OBJ="$BIN/recovery_serial.o"
 gcc $GCC_FLAGS "$SRC_HAL/serial.c" -o "$SERIAL_RECOVERY_OBJ"
 OBJ_RECOVERY+=("$SERIAL_RECOVERY_OBJ")
+
+# Add string.o for string functions
+STRING_RECOVERY_OBJ="$BIN/recovery_string.o"
+gcc $GCC_FLAGS "$SRC_KERNEL/string.c" -o "$STRING_RECOVERY_OBJ"
+OBJ_RECOVERY+=("$STRING_RECOVERY_OBJ")
 
 # Add font.o for font data
 FONT_OBJ="$BIN/recovery_font.o"

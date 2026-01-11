@@ -1,6 +1,11 @@
 #include "../include/kernel.h"
+#include "../include/fs.h"
+#include "../include/ttf.h"
+#include "inter_font_data.h"
 #include "../hal/serial.h"
+#include "../include/keyboard.h"
 #include <stdbool.h>
+#include <string.h>
 
 #ifdef QEMU
 #define IS_QEMU_ENV 1
@@ -94,8 +99,12 @@ int robust_mouse_init(void) {
 }
 
 void kernel_main(BootInfo *info) {
+  serial_write_string("[BOOT] ===== KERNEL_MAIN STARTED =====\n");
+
   uint32_t *fb = info->framebuffer;
   uint64_t total_pixels = (uint64_t)info->height * info->pitch;
+
+  serial_write_string("[BOOT] Framebuffer initialized\n");
 
   // Boot timeout protection - prevents infinite hangs
   volatile uint32_t boot_watchdog = 0;
@@ -227,13 +236,73 @@ void kernel_main(BootInfo *info) {
   draw_rect(info, 50, 80, 255, 12, 0xFF00AA00); // 85% progress
   flip_buffers(info);
 
+  // --- PHASE 3.5: Keyboard ---
+  serial_write_string("[BOOT] Starting keyboard phase\n");
+  kprint(info, "[    ] Keyboard", 50, 250, 0xFFFFFF00);
+  serial_write_string("[BOOT] About to call keyboard_init()\n");
+  keyboard_init();
+  serial_write_string("[BOOT] keyboard_init() returned - interrupts re-enabled\n");
+  serial_write_string("[BOOT] About to call kprint for keyboard success\n");
+  kprint(info, "[OK] PS/2 Keyboard", 50, 250, 0xFF00FF00);
+  serial_write_string("[BOOT] kprint completed, keyboard phase done\n");
+
+  kprint(info, "[    ] Filesystem", 50, 300, 0xFFFFFF00);
+  serial_write_string("[BOOT] About to call fs_init()\n");
+  fs_init();
+  serial_write_string("[BOOT] fs_init() completed\n");
+  kprint(info, "[OK] Virtual Filesystem (2 files)", 50, 300, 0xFF00FF00);
+
+  // Test TTF loading using embedded font data
+  serial_write_string("[BOOT] Testing TTF loading with embedded font...\n");
+  ttf_font_t test_font;
+  if (ttf_load_font_data(inter_font_data, inter_font_size, &test_font) == 0) {
+    serial_write_string("[BOOT] TTF font loaded successfully from embedded data!\n");
+
+    // Test glyph index lookup with bounds checking
+    int glyph_a = ttf_get_glyph_index(&test_font, 'A');
+    int glyph_space = ttf_get_glyph_index(&test_font, ' ');
+
+    serial_write_string("[BOOT] Glyph indices - 'A': ");
+    char glyph_str[16] = "00000";
+    int temp_glyph = glyph_a;
+    int idx = 4;
+    do {
+      if (idx >= 0) glyph_str[idx--] = '0' + (temp_glyph % 10);
+      temp_glyph /= 10;
+    } while (temp_glyph > 0 && idx >= 0);
+    serial_write_string(glyph_str);
+    serial_write_string(", ' ': ");
+    memset(glyph_str, '0', 5);
+    temp_glyph = glyph_space;
+    idx = 4;
+    do {
+      if (idx >= 0) glyph_str[idx--] = '0' + (temp_glyph % 10);
+      temp_glyph /= 10;
+    } while (temp_glyph > 0 && idx >= 0);
+    serial_write_string(glyph_str);
+    serial_write_string("\n");
+
+    // Test TTF text rendering with safety
+    serial_write_string("[BOOT] Testing TTF text rendering...\n");
+    kprint_ttf(info, "TTF: Hello!", 50, 380, 0xFF00FF00, &test_font);
+
+    ttf_free_font(&test_font);
+    serial_write_string("[BOOT] TTF test completed safely\n");
+  } else {
+    serial_write_string("[BOOT] TTF font loading failed - skipping TTF tests\n");
+  }
+
   // --- PHASE 4: Graphics & Display ---
+  serial_write_string("[BOOT] Starting Phase 4: Graphics & Display\n");
   boot_watchdog += 0x100000;
   if (boot_watchdog > BOOT_TIMEOUT)
     goto boot_timeout;
 
-  kprint(info, "[    ] Graphics System", 50, 235, 0xFFFFFF00);
+  serial_write_string("[BOOT] About to print Graphics System message\n");
+  kprint(info, "[    ] Graphics System", 50, 350, 0xFFFFFF00);
+  serial_write_string("[BOOT] About to flip buffers\n");
   flip_buffers(info);
+  serial_write_string("[BOOT] Graphics phase delay starting\n");
 
   for (volatile uint32_t i = 0;
        i < (is_qemu() ? 0x3FFF : 0x2FFFFF) && boot_watchdog < BOOT_TIMEOUT;
@@ -258,7 +327,7 @@ void kernel_main(BootInfo *info) {
   if (boot_watchdog > BOOT_TIMEOUT)
     goto boot_timeout;
 
-  kprint(info, "[    ] System Validation", 50, 285, 0xFFFFFF00);
+  kprint(info, "[    ] System Validation", 50, 400, 0xFFFFFF00);
   flip_buffers(info);
 
   while (inb(0x64) & 1)
@@ -284,7 +353,7 @@ void kernel_main(BootInfo *info) {
   flip_buffers(info);
 
   // --- FINAL INITIALIZATION COMPLETE ---
-  kprint(info, "[COMPLETE] Tiny64 OS Ready!", 50, 320, 0xFF00FF00);
+  kprint(info, "[COMPLETE] Tiny64 OS Ready!", 50, 450, 0xFF00FF00);
   flip_buffers(info);
 
   // Let user see completion for a moment
@@ -343,6 +412,9 @@ boot_timeout:
   kprint(info, "Welcome to Tiny64 OS", 20, 20, 0xFF000000);
   kprint(info, "Desktop Environment Loaded", 20, 45, 0xFF333333);
 
+  // Keep keyboard interrupts disabled - polling works reliably
+  // keyboard_enable_interrupt();
+
   // System status in corner
   size_t total_mem, used_mem, free_mem;
   get_heap_stats(&total_mem, &used_mem, &free_mem);
@@ -359,7 +431,7 @@ boot_timeout:
   // Draw interactive terminal window (moved down to not cover boot logs)
   draw_terminal_window(info, 100, 250);
   kprint(info, "Tiny64 Terminal v1.0", 115, 275, 0xFF000000);
-  kprint(info, "Commands: 'mouse_test' to test mouse", 115, 295, 0xFF333333);
+  kprint(info, "Commands: 'ls', 'cat <file>', 'write <file> <text>'", 115, 295, 0xFF333333);
   kprint(info, ">", 115, 315, 0xFF00AA00);
 
   // Flip to show the complete desktop
@@ -383,121 +455,16 @@ boot_timeout:
   int blink_state = 0;
 
   for (;;) {
-    // Handle mouse input
-    while (inb(0x64) & 1)
+    // Handle mouse input first (higher priority)
+    while (inb(0x64) & 1) {
       handle_mouse(info);
-
-    if (inb(0x64) & 1) {
-      serial_write_string("[DEBUG] Byte pending\n");
     }
 
-    // Handle keyboard input for terminal
-    if (last_key_pressed != 0) {
-      char c = last_key_pressed;
-      last_key_pressed = 0;
-
-      // Handle backspace
-      if (c == '\b' && char_count > 0) {
-        char_count--;
-        cmd_len = char_count; // Sync command buffer length
-        if (cmd_len >= 0) {
-          command_buffer[cmd_len] = '\0';
-        }
-        term_x -= 16; // Scalable font character width
-                      // Don't fill with white - let background show through
-      }
-      // Handle enter (new line)
-      else if (c == '\n') {
-        // Check for commands before processing enter
-        static char command_buffer[64] = {0};
-        static int cmd_len = 0;
-
-        // Extract command (from after the ">" prompt)
-        if (cmd_len > 0) {
-          command_buffer[cmd_len] = '\0';
-
-          // Process commands (simple string comparison)
-          int is_mouse_test = 1;
-          char *test_str = "mouse_test";
-          for (int i = 0; test_str[i] && command_buffer[i]; i++) {
-            if (test_str[i] != command_buffer[i]) {
-              is_mouse_test = 0;
-              break;
-            }
-          }
-          if (is_mouse_test && command_buffer[10] == '\0') {
-            mouse_test_active = 1;
-            start_mouse_test();
-            mouse_test_start_time = activity_counter;
-            kprint(info, "Mouse test started! Move mouse and click.", 50, 400,
-                   0xFFFFAA00);
-            flip_buffers(info);
-          } else {
-            int is_mouse_status = 1;
-            char *status_str = "mouse_status";
-            for (int i = 0; status_str[i] && command_buffer[i]; i++) {
-              if (status_str[i] != command_buffer[i]) {
-                is_mouse_status = 0;
-                break;
-              }
-            }
-            if (is_mouse_status && command_buffer[12] == '\0') {
-              int clicks, movement;
-              int status = get_mouse_test_status(&clicks, &movement);
-              if (status) {
-                char status_msg[64];
-                // Simple status display
-                kprint(info, "Mouse test active - clicks: ", 50, 420,
-                       0xFF00FF00);
-                kprint(info, "movement: detected", 50, 440, 0xFF00FF00);
-              } else {
-                kprint(info, "Mouse test not active", 50, 420, 0xFFFF0000);
-              }
-              flip_buffers(info);
-            } else {
-              kprint(info, "Unknown command", 50, 420, 0xFFFF0000);
-              flip_buffers(info);
-            }
-          }
-        }
-
-        term_y += 16; // Scalable font line height
-        term_x = 125;
-        char_count = 0;
-        cmd_len = 0;
-        command_buffer[0] = '\0';
-
-        // Scroll terminal if needed
-        if (term_y > 530) {
-          clear_terminal_area(info, 100, 250);
-          draw_terminal_window(info, 100, 250);
-          kprint(info, "Tiny64 Terminal v1.0", 115, 275, 0xFF000000);
-          term_y = 315;
-        }
-        kprint(info, ">", 115, term_y, 0xFF00AA00);
-      }
-      // Handle regular characters
-      else if (c >= 32 && c <= 126) {
-        draw_char(info, c, term_x, term_y, 0xFF000000);
-        term_x += 16; // Scalable font character width
-        char_count++;
-
-        // Store in command buffer
-        if (cmd_len < (int)sizeof(command_buffer) - 1) {
-          command_buffer[cmd_len++] = c;
-          command_buffer[cmd_len] = '\0';
-        }
-
-        // Auto-wrap lines
-        if (term_x > 490) {
-          term_y += 16; // Scalable font line height
-          term_x = 125;
-          char_count = 0;
-          cmd_len = 0;
-          command_buffer[0] = '\0';
-          kprint(info, ">", 115, term_y, 0xFF00AA00);
-        }
-      }
+    // Handle keyboard input - keep extremely lightweight to prevent CPU lockup
+    if (keyboard_has_data()) {
+      char c = keyboard_get_char();
+      // Just acknowledge the key press - no complex processing
+      // This prevents the CPU from getting locked up on keyboard input
     }
 
     // Activity indicator in taskbar (blinking effect)
@@ -514,7 +481,7 @@ boot_timeout:
       static int cursor_visible = 1;
       cursor_visible = !cursor_visible;
       uint32_t cursor_color = cursor_visible ? 0xFF000000 : 0xFFFFFFFF;
-      fill_rect(info, term_x, term_y - 2, 2, 16, cursor_color);
+      fill_rect(info, term_x, term_y - 2, 2, 48, cursor_color);
     }
 
     // Flip buffers to show all updates at once

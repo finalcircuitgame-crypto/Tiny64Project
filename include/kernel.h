@@ -54,7 +54,11 @@ void fill_circle(BootInfo *info, int cx, int cy, int radius, uint32_t color);
 void draw_rect(BootInfo *info, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
 void draw_bitmap(BootInfo *info, uint16_t *bitmap, int x, int y, int scale, uint32_t color);
 void draw_char(BootInfo *info, char c, int x, int y, uint32_t color);
+void draw_char_scaled(BootInfo *info, char c, int x, int y, uint32_t color, int scale);
 void kprint(BootInfo *info, const char *str, int x, int y, uint32_t color);
+
+// TTF font rendering
+void kprint_ttf(BootInfo *info, const char *str, int x, int y, uint32_t color, void *ttf_font);
 
 /* --- Cursor Logic (mouse.c) --- */
 
@@ -73,6 +77,7 @@ void debug_heap(BootInfo *info, int start_y);
 
 void init_gdt(void);
 void init_idt(void);
+void set_idt_gate_ist(int n, uint64_t handler, uint8_t ist);
 int mouse_init(void);
 void handle_mouse(BootInfo *info);
 void start_mouse_test(void);

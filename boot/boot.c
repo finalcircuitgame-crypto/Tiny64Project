@@ -162,16 +162,18 @@ EFI_STATUS EFIAPI EfiMain(EFI_HANDLE ImageHandle,
   draw_boot_splash(gop);
   update_boot_progress(gop, "Initializing bootloader...", 15);
 
+  /* Basic filesystem detection */
   EFI_GUID fsGuid = EFI_SFSP_GUID;
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
   gBS->LocateProtocol(&fsGuid, NULL, (void **)&fs);
   update_boot_progress(gop, "Filesystem ready...", 25);
 
-  EFI_FILE_PROTOCOL *root, *kernelFile;
+  EFI_FILE_PROTOCOL *root;
   fs->OpenVolume(fs, &root);
 
   /* Load the selected kernel */
   update_boot_progress(gop, "Opening kernel file...", 35);
+  EFI_FILE_PROTOCOL *kernelFile;
   if (EFI_ERROR(root->Open(root, &kernelFile, kernel_path, 1, 0))) {
     update_boot_progress(gop, "ERROR: Kernel file missing!", 0);
     gST->ConOut->OutputString(gST->ConOut, (uint16_t *)L"Kernel Missing!\r\n");

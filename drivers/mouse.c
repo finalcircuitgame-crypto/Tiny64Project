@@ -55,155 +55,139 @@ static uint8_t mouse_read_device(void) {
 }
 
 int mouse_init(void) {
-  serial_write_string("[MOUSE_INIT] Starting PS/2 mouse initialization...\n");
+  serial_write_string("[MOUSE_INIT] Starting robust PS/2 mouse initialization...\n");
 
   __asm__ volatile("cli");
 
-  // Step 1: Quick check if PS/2 controller exists
-  serial_write_string("[MOUSE_INIT] Step 1: Checking PS/2 controller...\n");
-  uint8_t test_status = inb(0x64);
-  serial_write_string("[MOUSE_INIT] Status byte: 0x");
-  char hexbuf[3] = "00";
-  hexbuf[0] = "0123456789ABCDEF"[(test_status >> 4) & 0xF];
-  hexbuf[1] = "0123456789ABCDEF"[test_status & 0xF];
-  serial_write_string(hexbuf);
-  serial_write_string("\n");
+  // Step 1: Disable both keyboard and mouse ports
+  serial_write_string("[MOUSE_INIT] Disabling keyboard and mouse ports...\n");
 
-  if ((test_status & 0xFF) == 0xFF) {
-    serial_write_string("[MOUSE_INIT] No PS/2 controller found, returning 0\n");
-    __asm__ volatile("sti");
-    return 0;
-  }
-  serial_write_string("[MOUSE_INIT] PS/2 controller found, continuing...\n");
-
-  // Step 2: Disable both keyboard and mouse ports
-  serial_write_string("[MOUSE_INIT] Step 2: Disabling ports...\n");
-
+  // Disable keyboard
   mouse_wait(1);
-  outb(0x64, 0xAD); // Disable keyboard
+  outb(0x64, 0xAD);
   io_wait();
 
+  // Disable mouse
   mouse_wait(1);
-  outb(0x64, 0xA7); // Disable mouse
+  outb(0x64, 0xA7);
   io_wait();
 
-  // Flush any pending data from output buffer
+  // Step 2: Flush output buffer thoroughly
   serial_write_string("[MOUSE_INIT] Flushing output buffer...\n");
-  while (inb(0x64) & 1) {
-    inb(0x60);
-    io_wait();
+  int flush_count = 0;
+  for (int i = 0; i < 1000; i++) {
+    if (inb(0x64) & 1) {
+      inb(0x60);
+      flush_count++;
+      io_wait();
+    } else {
+      break;
+    }
   }
-  serial_write_string("[MOUSE_INIT] Output buffer flushed\n");
+  char numbuf[4] = "000";
+  numbuf[0] = '0' + (flush_count / 100) % 10;
+  numbuf[1] = '0' + (flush_count / 10) % 10;
+  numbuf[2] = '0' + flush_count % 10;
+  serial_write_string("[MOUSE_INIT] Flushed ");
+  serial_write_string(numbuf);
+  serial_write_string(" bytes\n");
 
   // Step 3: Configure controller for mouse
-  serial_write_string("[MOUSE_INIT] Step 3: Configuring controller...\n");
+  serial_write_string("[MOUSE_INIT] Configuring PS/2 controller...\n");
 
   mouse_wait(1);
   outb(0x64, 0x20); // Get config byte
-  io_wait();
 
-  serial_write_string("[MOUSE_INIT] Waiting for config byte...\n");
   uint8_t config = mouse_read_device();
-  serial_write_string("[MOUSE_INIT] Got config byte\n");
-  serial_write_string("[MOUSE_INIT] Current config: 0x");
-  hexbuf[0] = "0123456789ABCDEF"[(config >> 4) & 0xF];
-  hexbuf[1] = "0123456789ABCDEF"[config & 0xF];
-  serial_write_string(hexbuf);
-  serial_write_string("\n");
-
   config |= (1 << 1); // Enable mouse clock
-  config |= (1 << 5); // Enable mouse IRQ
-
-  serial_write_string("[MOUSE_INIT] New config: 0x");
-  hexbuf[0] = "0123456789ABCDEF"[(config >> 4) & 0xF];
-  hexbuf[1] = "0123456789ABCDEF"[config & 0xF];
-  serial_write_string(hexbuf);
-  serial_write_string("\n");
+  config |= (1 << 5); // Enable mouse interrupts
 
   mouse_wait(1);
   outb(0x64, 0x60); // Set config byte
-  io_wait();
-
   mouse_wait(1);
   outb(0x60, config);
-  io_wait();
-  serial_write_string("[MOUSE_INIT] Config set\n");
 
-  // Step 4: Reset mouse
-  serial_write_string("[MOUSE_INIT] Step 4: Resetting mouse...\n");
+  // Step 4: Reset mouse with robust handling
+  serial_write_string("[MOUSE_INIT] Resetting mouse...\n");
 
-  mouse_write_device(0xFF); // Reset command
-  serial_write_string("[MOUSE_INIT] Reset command sent\n");
+  int got_reset_fa = 0, got_reset_aa = 0;
+  outb(0x64, 0xD4); // Next byte to mouse
+  outb(0x60, 0xFF); // Reset command
 
-  // Read responses: 0xFA (ACK), 0xAA (BAT OK)
-  serial_write_string("[MOUSE_INIT] Reading reset responses...\n");
-  int responses = 0;
-  for (int attempts = 0; attempts < 1000 && responses < 2; attempts++) {
-    if (inb(0x64) & 1) {
-      uint8_t data = inb(0x60);
-      responses++;
-      serial_write_string("[MOUSE_INIT] Reset response ");
-      char numbuf[2] = "0";
-      numbuf[0] = '0' + responses;
-      serial_write_string(numbuf);
-      serial_write_string(": 0x");
-      hexbuf[0] = "0123456789ABCDEF"[(data >> 4) & 0xF];
-      hexbuf[1] = "0123456789ABCDEF"[data & 0xF];
-      serial_write_string(hexbuf);
-      serial_write_string("\n");
-    } else {
-      io_wait();
+  // Wait for reset responses: 0xFA, then 0xAA
+  for (int tries = 0; tries < 40000; ++tries) {
+    if ((inb(0x64) & 1)) {
+      uint8_t resp = inb(0x60);
+      if (!got_reset_fa && resp == 0xFA) {
+        got_reset_fa = 1;
+        serial_write_string("[MOUSE_INIT] Got reset ACK (0xFA)\n");
+      } else if (got_reset_fa && resp == 0xAA) {
+        got_reset_aa = 1;
+        serial_write_string("[MOUSE_INIT] Got self-test passed (0xAA)\n");
+        break;
+      }
     }
+    io_wait();
   }
 
-  // Step 5: Enable streaming mode
-  serial_write_string("[MOUSE_INIT] Step 5: Enabling streaming mode...\n");
+  if (!got_reset_fa || !got_reset_aa) {
+    serial_write_string("[MOUSE_INIT] Mouse reset incomplete, continuing anyway...\n");
+    // Don't fail here - QEMU and some real hardware don't respond properly
+  }
 
-  mouse_write_device(0xF4); // Enable streaming
+  // Step 5: Enable streaming mode with robust ACK handling
+  serial_write_string("[MOUSE_INIT] Enabling streaming mode...\n");
 
-  serial_write_string("[MOUSE_INIT] Waiting for ACK...\n");
+  outb(0x64, 0xD4); // Next byte to mouse
+  outb(0x60, 0xF4); // Enable streaming
+
   uint8_t ack = 0;
-  for (int i = 0; i < 20000; i++) { // ~20ms window
-    if (inb(0x64) & 1) {
+  // Wait longer if reset responses were incomplete (likely QEMU)
+  int ack_timeout = (!got_reset_fa || !got_reset_aa) ? 5000 : 20000;
+
+  for (int i = 0; i < ack_timeout; i++) {
+    if ((inb(0x64) & 1)) {
       ack = inb(0x60);
       break;
     }
     io_wait();
   }
 
-  serial_write_string("[MOUSE_INIT] Got response: 0x");
-  hexbuf[0] = "0123456789ABCDEF"[(ack >> 4) & 0xF];
-  hexbuf[1] = "0123456789ABCDEF"[ack & 0xF];
-  serial_write_string(hexbuf);
-  serial_write_string("\n");
-
   if (ack == 0xFA) {
     serial_write_string("[MOUSE_INIT] ACK received - streaming enabled!\n");
   } else {
-    serial_write_string(
-        "[MOUSE_INIT] No valid ACK received, continuing anyway...\n");
+    serial_write_string("[MOUSE_INIT] No ACK received (normal for QEMU), assuming enabled\n");
   }
 
-  // Step 6: Re-enable the ports
-  serial_write_string("[MOUSE_INIT] Step 6: Re-enabling ports...\n");
+  // Step 6: Re-enable ports
+  serial_write_string("[MOUSE_INIT] Re-enabling keyboard and mouse ports...\n");
 
   mouse_wait(1);
-  outb(0x64, 0xAE); // Enable keyboard
+  outb(0x64, 0xAE); // Re-enable keyboard
   io_wait();
 
   mouse_wait(1);
-  outb(0x64, 0xA8); // Enable mouse
+  outb(0x64, 0xA8); // Re-enable mouse
   io_wait();
 
-  // Unmask IRQ12 on slave PIC
+  // Unmask IRQ12 on slave PIC for mouse interrupts
   uint8_t mask = inb(0xA1);
   mask &= ~(1 << 4); // IRQ12 = bit 4
   outb(0xA1, mask);
 
+  // Final flush to ensure clean state
+  for (int i = 0; i < 100; i++) {
+    if (inb(0x64) & 1) {
+      inb(0x60);
+    } else {
+      break;
+    }
+    io_wait();
+  }
+
   __asm__ volatile("sti");
 
-  serial_write_string(
-      "[MOUSE_INIT] Initialization complete, returning success\n");
+  serial_write_string("[MOUSE_INIT] Mouse initialization complete!\n");
   return 1;
 }
 
@@ -276,14 +260,7 @@ void handle_mouse(BootInfo *info) {
     if (status & 0x20) {
       uint8_t data = inb(0x60);
 
-      if (mouse_cycle > 0 && !(mouse_byte[0] & 0x08)) {
-        // Lost sync mid-packet — reset
-        mouse_cycle = 0;
-        continue;
-      }
-
       // Sync: first byte must have bit 3 set
-      // First byte must have bit 3 set
       if (mouse_cycle == 0) {
         if (!(data & 0x08)) {
           // Not a valid first byte — discard and stay in sync search mode
@@ -306,10 +283,15 @@ void handle_mouse(BootInfo *info) {
         restore_cursor_bg(info, mouse_x, mouse_y);
 
         int16_t dx = (int8_t)mouse_byte[1];
-        int16_t dy = (int8_t)mouse_byte[2];
+        int16_t dy = -(int8_t)mouse_byte[2];  // Invert Y: PS/2 positive = up, screen positive = down
+
+        // Apply sensitivity scaling and offset correction
+        dx = dx * 1 / 2;  // Reduce horizontal movement
+        dy = dy * 1 / 2;  // Reduce vertical movement
 
         int new_x = mouse_x + dx;
         int new_y = mouse_y + dy;
+
 
         if (mouse_test_mode) {
           if (new_x != last_mouse_x || new_y != last_mouse_y) {
@@ -333,8 +315,9 @@ void handle_mouse(BootInfo *info) {
         // NOTE: no PIC EOI here — this is not an IRQ handler
       }
     } else {
-      // Keyboard or other data: drain to keep mouse in sync
-      inb(0x60);
+      // Keyboard data: let the keyboard IRQ handler deal with it
+      // DO NOT drain here - it steals keyboard initialization responses!
+      break;  // Exit the polling loop to avoid interfering
     }
   }
 }

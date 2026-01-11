@@ -13,7 +13,9 @@ Tiny64/
 ├── kernel/         # Kernel core
 │   ├── kernel.c    # Main kernel entry point and UI
 │   ├── graphics.c  # Graphics rendering functions
-│   ├── font.c      # Font rendering
+│   ├── font.c      # Inter font rendering
+│   ├── fs.c         # Virtual filesystem
+│   ├── string.c     # String/memory functions
 │   └── link_kernel.ld # Kernel linker script
 ├── hal/            # Hardware Abstraction Layer
 │   ├── gdt.c       # Global Descriptor Table setup

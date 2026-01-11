@@ -31,7 +31,7 @@ void handle_double_fault(void) {
 /* KEYBOARD: Handle via Interrupt (Good!) */
 void handle_keyboard_interrupt(void) {
     uint8_t scancode = inb(0x60);
-    keyboard_handler_main(scancode); 
+    keyboard_handler_main(scancode);
     outb(0x20, 0x20); // Master EOI
 }
 
@@ -42,12 +42,16 @@ void handle_mouse_interrupt(void) {
 }
 
 void set_idt_gate(int n, uint64_t handler) {
+    set_idt_gate_ist(n, handler, 0);
+}
+
+void set_idt_gate_ist(int n, uint64_t handler, uint8_t ist) {
     idt[n].low = handler & 0xFFFF;
-    
+
     // MUST BE 0x08 to match the assembly GDT above
-    idt[n].sel = 0x08; 
-    
-    idt[n].ist = 0;
+    idt[n].sel = 0x08;
+
+    idt[n].ist = ist;  // IST index (0 = no IST, 1-7 = IST stack)
     idt[n].attr = 0x8E;
     idt[n].mid = (handler >> 16) & 0xFFFF;
     idt[n].high = (handler >> 32) & 0xFFFFFFFF;
@@ -67,7 +71,7 @@ void init_idt(void) {
 
     /* 3. Set Gates - Validate addresses before setting */
     if (isr_stub_double_fault && isr_stub_keyboard && isr_stub_mouse) {
-        set_idt_gate(8, (uint64_t)isr_stub_double_fault);
+        set_idt_gate_ist(8, (uint64_t)isr_stub_double_fault, 1);  // Double fault uses IST1
         set_idt_gate(0x21, (uint64_t)isr_stub_keyboard);
         set_idt_gate(0x2C, (uint64_t)isr_stub_mouse);
     }
