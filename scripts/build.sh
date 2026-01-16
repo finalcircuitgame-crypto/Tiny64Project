@@ -182,6 +182,17 @@ gcc $DRIVER_GCC_FLAGS "ide.c" -o "$IDE_OBJ"
 OBJ_FILES+=("$IDE_OBJ")
 cd "$PROJECT_ROOT"
 
+# Compile top-level drivers (keyboard/mouse) so kernel can link input symbols
+KEYBOARD_SRC="$PROJECT_ROOT/drivers/keyboard.c"
+KEYBOARD_OBJ="$BIN/keyboard.o"
+gcc $GCC_FLAGS "$KEYBOARD_SRC" -o "$KEYBOARD_OBJ"
+OBJ_FILES+=("$KEYBOARD_OBJ")
+
+MOUSE_SRC="$PROJECT_ROOT/drivers/mouse.c"
+MOUSE_OBJ="$BIN/mouse.o"
+gcc $GCC_FLAGS "$MOUSE_SRC" -o "$MOUSE_OBJ"
+OBJ_FILES+=("$MOUSE_OBJ")
+
 add_objs_from_dir_exclude "$SRC_HAL" no
 add_objs_from_dir_exclude "$SRC_CORE" yes
 add_objs_from_dir_exclude "$SRC_GRAPHICS" yes
@@ -230,6 +241,20 @@ for src in $(find "$SRC_DRIVERS" -maxdepth 1 -type f \( -name "*.c" -o -name "*.
     gcc $GCC_FLAGS "$src" -o "$obj"
     OBJ_RECOVERY+=("$obj")
 done
+
+# Also compile top-level drivers (keyboard, mouse) into recovery build so interrupts and input handlers link
+for src in "$PROJECT_ROOT/drivers/keyboard.c" "$PROJECT_ROOT/drivers/mouse.c"; do
+    if [ -f "$src" ]; then
+        obj="$BIN/recovery_$(basename "$src" | sed 's/\.\w\+$/.o/')"
+        gcc $GCC_FLAGS "$src" -o "$obj"
+        OBJ_RECOVERY+=("$obj")
+    fi
+done
+
+# Include minimal memory allocation for recovery build (kmalloc/kfree used by drivers)
+MEMORY_RECOVERY_OBJ="$BIN/recovery_memory.o"
+gcc $GCC_FLAGS "$SRC_FS/memory.c" -o "$MEMORY_RECOVERY_OBJ"
+OBJ_RECOVERY+=("$MEMORY_RECOVERY_OBJ")
 
 echo "[3.5] Link Recovery"
 ld -T "$SRC_CORE/link_kernel.ld" -o "$BIN/recovery.elf" "${OBJ_RECOVERY[@]}"
