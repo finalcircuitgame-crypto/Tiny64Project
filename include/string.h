@@ -15,3 +15,7 @@ char* strcpy(char* dest, const char* src);
 char* strncpy(char* dest, const char* src, size_t n);
 char* strcat(char* dest, const char* src);
 char* strchr(const char* str, int c);
+int strncmp(const char* s1, const char* s2, size_t n);
+
+// Math utility functions
+int abs(int x);

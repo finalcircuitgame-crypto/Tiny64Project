@@ -1,5 +1,6 @@
 #include "../hal/serial.h"
 #include "../include/kernel.h"
+#include <stdio.h>
 
 int mouse_x = 0;
 int mouse_y = 0;
@@ -246,6 +247,78 @@ int get_mouse_test_status(int *clicks, int *movement) {
 }
 
 // Improved mouse handler: Fix movement and drain stray bytes from keyboard
+void mouse_handle_byte(BootInfo *info, uint8_t data) {
+  // Process single mouse byte (called from main loop with PS/2 data)
+
+  // Sync: first byte must have bit 3 set
+  if (mouse_cycle == 0) {
+    if (!(data & 0x08)) {
+      // Not a valid first byte — discard and stay in sync search mode
+      return;
+    }
+  }
+
+  mouse_byte[mouse_cycle++] = data;
+
+  if (mouse_cycle == 3) {
+    mouse_cycle = 0;
+
+    uint8_t old_left_pressed = mouse_left_pressed;
+    mouse_left_pressed = (mouse_byte[0] & 0x01);
+
+    if (mouse_test_mode && !old_left_pressed && mouse_left_pressed) {
+      mouse_test_clicks++;
+    }
+
+    restore_cursor_bg(info, mouse_x, mouse_y);
+
+    int16_t dx = (int8_t)mouse_byte[1];
+    int16_t dy = -(int8_t)mouse_byte[2];  // Invert Y: PS/2 positive = up, screen positive = down
+
+    // Apply sensitivity scaling and offset correction
+    dx = dx * 1 / 2;  // Reduce horizontal movement
+    dy = dy * 1 / 2;  // Reduce vertical movement
+
+    int new_x = mouse_x + dx;
+    int new_y = mouse_y + dy;
+
+    if (mouse_test_mode) {
+      if (new_x != last_mouse_x || new_y != last_mouse_y) {
+        mouse_test_movement++;
+        last_mouse_x = new_x;
+        last_mouse_y = new_y;
+      }
+    }
+
+    if (new_x < 0)
+      new_x = 0;
+    if (new_y < 0)
+      new_y = 0;
+    if (new_x > (int)info->width - CURSOR_SIZE)
+      new_x = info->width - CURSOR_SIZE;
+    if (new_y > (int)info->height - CURSOR_SIZE)
+      new_y = info->height - CURSOR_SIZE;
+
+    // Update global mouse position
+    mouse_x = new_x;
+    mouse_y = new_y;
+
+    draw_cursor(info, mouse_x, mouse_y);
+
+    // NOTE: no PIC EOI here — this is not an IRQ handler
+  }
+}
+
+// Public helper to request a sample/report from the mouse device.
+void mouse_request_sample(void) {
+  // Tell controller next byte is for mouse
+  mouse_wait(1);
+  outb(0x64, 0xD4);
+  // Request data packet
+  mouse_wait(1);
+  outb(0x60, 0xEB);
+}
+
 void handle_mouse(BootInfo *info) {
   uint8_t status;
 
@@ -318,6 +391,39 @@ void handle_mouse(BootInfo *info) {
       // Keyboard data: let the keyboard IRQ handler deal with it
       // DO NOT drain here - it steals keyboard initialization responses!
       break;  // Exit the polling loop to avoid interfering
+    }
+    // Debug: log when a full packet is processed (for visibility)
+    if (mouse_cycle == 0) {
+      int dx = (int8_t)mouse_byte[1];
+      int dy = -(int8_t)mouse_byte[2];
+      // hex nibble helper
+      const char *hexchars = "0123456789ABCDEF";
+      char h[3] = { hexchars[(mouse_byte[0] >> 4) & 0xF], hexchars[mouse_byte[0] & 0xF], 0 };
+      serial_write_string("[MOUSE] pkt: b0=0x");
+      serial_write_string(h);
+      serial_write_string(" dx=");
+      // int to string
+      char ibuf[16];
+      int ix = 0;
+      int v = dx;
+      if (v == 0) {
+        serial_write_string("0");
+      } else {
+        if (v < 0) { serial_write_string("-"); v = -v; }
+        while (v > 0 && ix < (int)sizeof(ibuf)-1) { ibuf[ix++] = '0' + (v % 10); v /= 10; }
+        while (ix > 0) serial_write_string((char[]){ ibuf[--ix], 0 });
+      }
+      serial_write_string(" dy=");
+      ix = 0;
+      v = dy;
+      if (v == 0) {
+        serial_write_string("0");
+      } else {
+        if (v < 0) { serial_write_string("-"); v = -v; }
+        while (v > 0 && ix < (int)sizeof(ibuf)-1) { ibuf[ix++] = '0' + (v % 10); v /= 10; }
+        while (ix > 0) serial_write_string((char[]){ ibuf[--ix], 0 });
+      }
+      serial_write_string("\n");
     }
   }
 }

@@ -26,6 +26,8 @@ static inline uint8_t inb(uint16_t port) {
     return ret;
 }
 
+// Note: outw, inw, outl, inl are defined in kernel.c to avoid conflicts
+
 static inline void io_wait(void) {
     /* Port 0x80 is used for checkpoints during POST, safe to write to */
     outb(0x80, 0);
@@ -54,7 +56,9 @@ void fill_circle(BootInfo *info, int cx, int cy, int radius, uint32_t color);
 void draw_rect(BootInfo *info, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
 void draw_bitmap(BootInfo *info, uint16_t *bitmap, int x, int y, int scale, uint32_t color);
 void draw_char(BootInfo *info, char c, int x, int y, uint32_t color);
+void draw_char_terminal(BootInfo *info, char c, int x, int y, uint32_t color);
 void draw_char_scaled(BootInfo *info, char c, int x, int y, uint32_t color, int scale);
+void mouse_request_sample(void);
 void kprint(BootInfo *info, const char *str, int x, int y, uint32_t color);
 
 // TTF font rendering
@@ -80,9 +84,26 @@ void init_idt(void);
 void set_idt_gate_ist(int n, uint64_t handler, uint8_t ist);
 int mouse_init(void);
 void handle_mouse(BootInfo *info);
+void mouse_handle_byte(BootInfo *info, uint8_t data);
 void start_mouse_test(void);
 int get_mouse_test_status(int *clicks, int *movement);
 void keyboard_handler_main(uint8_t scancode);
+
+/* --- Doom Integration --- */
+
+void doomgeneric_Create(int argc, char **argv);
+void doomgeneric_Tick();
+void doomgeneric_SetBootInfo(BootInfo* info);
+
+/* --- Windows XP UI --- */
+
+void draw_winxp_desktop(BootInfo *info);
+void draw_winxp_window(BootInfo *info, int x, int y, int w, int h, const char *title, int active);
+void draw_winxp_taskbar(BootInfo *info);
+void draw_winxp_button(BootInfo *info, int x, int y, int w, int h, const char *text, uint32_t bg_color);
+void draw_winxp_icon(BootInfo *info, int x, int y, const char *label);
+void draw_winxp_terminal(BootInfo *info, int x, int y, int w, int h);
+void init_winxp_desktop(BootInfo *info);
 
 /* --- Global Variables (extern) --- */
 

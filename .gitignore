@@ -1,0 +1,36 @@
+# Build artifacts
+bin/
+*.o
+*.elf
+*.iso
+*.fat32
+*.img
+efiboot.img
+
+# Third party archives (but keep extracted source)
+third_party/*.zip
+third_party/*.tar.gz
+
+# Doom WAD files and game data
+*.wad
+*.WAD
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
