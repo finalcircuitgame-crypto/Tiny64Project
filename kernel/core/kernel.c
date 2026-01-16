@@ -1025,7 +1025,7 @@ boot_timeout:
                       term_y += line_height;
                       p += strlen(p) + 1;
                     }
-                  } else {
+                    } else {
                     kprint_auto(info, "(no files)", prompt_x, term_y, 0xFFFFFFFF);
                     term_y += line_height;
                   }
@@ -1048,7 +1048,7 @@ boot_timeout:
                       kprint_auto(info, line, prompt_x, term_y, 0xFFFFFFFF);
                       term_y += line_height;
                     }
-                  } else {
+              } else {
                     kprint_auto(info, "File not found", prompt_x, term_y, 0xFFFF0000);
                     term_y += line_height;
                   }
@@ -1063,10 +1063,10 @@ boot_timeout:
                     fs_write_file(fname, (const uint8_t *)text, strlen(text));
                     kprint_auto(info, "Wrote file", prompt_x, term_y, 0xFF00FF00);
                     term_y += line_height;
-                  } else {
+            } else {
                     kprint_auto(info, "Usage: write <file> <text>", prompt_x, term_y, 0xFFFF0000);
                     term_y += line_height;
-                  }
+            }
                 } else if (strcmp(command_buffer, "wadtest") == 0) {
                   // Test if embedded WAD data exists
                   kprint_auto(info, "Testing embedded WAD data...", prompt_x, term_y, 0xFFFFFF00);
@@ -1319,12 +1319,12 @@ boot_timeout:
                 } else {
                   kprint_auto(info, "Unknown command. Type 'help' for available commands.", prompt_x, term_y, 0xFFFF0000);
                   term_y += line_height;
-                }
+          }
         }
 
               // Clear command buffer and position prompt on new line
-              cmd_len = 0;
-              command_buffer[0] = '\0';
+          cmd_len = 0;
+          command_buffer[0] = '\0';
 
               // Ensure prompt appears on a clean new line
               term_y += line_height;

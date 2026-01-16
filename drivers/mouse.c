@@ -78,9 +78,9 @@ int mouse_init(void) {
   int flush_count = 0;
   for (int i = 0; i < 1000; i++) {
     if (inb(0x64) & 1) {
-      inb(0x60);
+    inb(0x60);
       flush_count++;
-      io_wait();
+    io_wait();
     } else {
       break;
     }
@@ -128,8 +128,8 @@ int mouse_init(void) {
         break;
       }
     }
-    io_wait();
-  }
+      io_wait();
+    }
 
   if (!got_reset_fa || !got_reset_aa) {
     serial_write_string("[MOUSE_INIT] Mouse reset incomplete, continuing anyway...\n");

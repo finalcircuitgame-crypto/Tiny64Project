@@ -2,41 +2,11 @@
 .section .text.entry
 .global _start
 .extern kernel_main
-.extern bios_boot_init
 
-# Entry point for both BIOS and UEFI boot
+# This is exactly at 0x100000
 _start:
     cli                         # Disable interrupts
 
-    # Check if we're running under UEFI or BIOS
-    # UEFI puts magic value in RAX, BIOS doesn't
-    movq $0xFEDCBA9876543210, %rbx
-    cmpq %rbx, %rax
-    je uefi_boot
-
-    # BIOS boot path
-bios_boot:
-    # Set up GDT for BIOS boot (if not already done)
-    call bios_boot_init
-
-    # Create minimal BootInfo for BIOS
-    pushq $0                    # padding
-    pushq $0                    # reserved
-    pushq $0                    # pitch (unknown)
-    pushq $480                  # height (VGA default)
-    pushq $640                  # width (VGA default)
-    movq %rsp, %rdi             # BootInfo pointer
-
-    # Set up stack
-    movq $0x90000, %rsp
-    movq %rsp, %rbp
-    andq $-16, %rsp
-
-    call kernel_main
-    jmp hang
-
-uefi_boot:
-    # UEFI boot path (original code)
     # 1. Set up a valid Stack (16KB)
     leaq stack_top(%rip), %rsp
     movq %rsp, %rbp
