@@ -55,8 +55,8 @@
 #include <CoreFoundation/CFUserNotification.h>
 #endif
 
-#define DEFAULT_RAM 6 /* MiB */
-#define MIN_RAM     6  /* MiB */
+#define DEFAULT_RAM 2 /* MiB - reduced for embedded system */
+#define MIN_RAM     1  /* MiB - minimum */
 
 
 typedef struct atexit_listentry_s atexit_listentry_t;
@@ -74,12 +74,21 @@ void I_AtExit(atexit_func_t func, boolean run_on_error)
 {
     atexit_listentry_t *entry;
 
+    serial_write_string("[I_AtExit] Registering exit function\n");
+
     entry = malloc(sizeof(*entry));
+
+    if (!entry) {
+        serial_write_string("[I_AtExit] Failed to allocate memory\n");
+        return;
+    }
 
     entry->func = func;
     entry->run_on_error = run_on_error;
     entry->next = exit_funcs;
     exit_funcs = entry;
+
+    serial_write_string("[I_AtExit] Exit function registered\n");
 }
 
 // Tactile feedback function, probably used for the Logitech Cyberman
@@ -102,14 +111,23 @@ static byte *AutoAllocMemory(int *size, int default_ram, int min_ram)
     // provided is accepted.
 
     zonemem = NULL;
+    int attempts = 0;
+    const int MAX_ATTEMPTS = 10; // Prevent infinite loop
 
-    while (zonemem == NULL)
+    while (zonemem == NULL && attempts < MAX_ATTEMPTS)
     {
         // We need a reasonable minimum amount of RAM to start.
 
         if (default_ram < min_ram)
         {
-            I_Error("Unable to allocate %i MiB of RAM for zone", default_ram);
+            // Instead of calling I_Error (which hangs), try minimum size
+            default_ram = min_ram;
+            if (attempts >= MAX_ATTEMPTS - 1) {
+                // Last attempt - use a very small size
+                *size = 256 * 1024; // 256 KB minimum
+                zonemem = malloc(*size);
+                break;
+            }
         }
 
         // Try to allocate the zone memory.
@@ -124,6 +142,7 @@ static byte *AutoAllocMemory(int *size, int default_ram, int min_ram)
         if (zonemem == NULL)
         {
             default_ram -= 1;
+            attempts++;
         }
     }
 
@@ -157,8 +176,9 @@ byte *I_ZoneBase (int *size)
 
     zonemem = AutoAllocMemory(size, default_ram, min_ram);
 
-    printf("zone memory: %p, %x allocated for zone\n", 
-           zonemem, *size);
+    // Simplified printf - don't use format specifiers that aren't supported
+    // printf("zone memory: %p, %x allocated for zone\n", zonemem, *size);
+    printf("zone memory allocated\n");
 
     return zonemem;
 }
@@ -377,6 +397,9 @@ void I_Error (char *error, ...)
 
     // Message first.
     va_start(argptr, error);
+    serial_write_string("[I_Error] Error: ");
+    serial_write_string(error);
+    serial_write_string("\n");
     //fprintf(stderr, "\nError: ");
     vfprintf(stderr, error, argptr);
     fprintf(stderr, "\n\n");

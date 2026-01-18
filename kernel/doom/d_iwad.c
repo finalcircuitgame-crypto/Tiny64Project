@@ -722,6 +722,8 @@ char *D_FindIWAD(int mask, GameMission_t *mission)
     int iwadparm;
     int i;
 
+    serial_write_string("[D_FindIWAD] Starting IWAD search\n");
+
     // Check for the -iwad parameter
 
     //!
@@ -734,6 +736,8 @@ char *D_FindIWAD(int mask, GameMission_t *mission)
 
     if (iwadparm)
     {
+        serial_write_string("[D_FindIWAD] Using -iwad parameter\n");
+
         // Search through IWAD dirs for an IWAD with the given name.
 
         iwadfile = myargv[iwadparm + 1];
@@ -742,26 +746,44 @@ char *D_FindIWAD(int mask, GameMission_t *mission)
 
         if (result == NULL)
         {
+            serial_write_string("[D_FindIWAD] IWAD not found, calling I_Error\n");
             I_Error("IWAD file '%s' not found!", iwadfile);
         }
-        
+
         *mission = IdentifyIWADByName(result, mask);
     }
     else
     {
+        serial_write_string("[D_FindIWAD] No -iwad parameter, searching for IWAD\n");
+
         // Search through the list and look for an IWAD
 
         printf("-iwad not specified, trying a few iwad names\n");
 
         result = NULL;
 
+        serial_write_string("[D_FindIWAD] Building IWAD directory list\n");
         BuildIWADDirList();
-    
+
+        serial_write_string("[D_FindIWAD] Searching directories\n");
         for (i=0; result == NULL && i<num_iwad_dirs; ++i)
         {
+            serial_write_string("[D_FindIWAD] Searching directory ");
+            serial_write_string(iwad_dirs[i]);
+            serial_write_string("\n");
             result = SearchDirectoryForIWAD(iwad_dirs[i], mask, mission);
         }
+
+        serial_write_string("[D_FindIWAD] IWAD search complete\n");
     }
+
+    serial_write_string("[D_FindIWAD] Returning result: ");
+    if (result) {
+        serial_write_string(result);
+    } else {
+        serial_write_string("NULL");
+    }
+    serial_write_string("\n");
 
     return result;
 }

@@ -1883,8 +1883,10 @@ void M_SaveDefaultsAlternate(char *main, char *extra)
 
 void M_LoadDefaults (void)
 {
+    serial_write_string("[M_LoadDefaults] Starting\n");
+
     int i;
- 
+
     // check for a custom default file
 
     //!
@@ -1922,7 +1924,7 @@ void M_LoadDefaults (void)
     if (i)
     {
         extra_defaults.filename = myargv[i+1];
-        printf("        extra configuration file: %s\n", 
+        printf("        extra configuration file: %s\n",
                extra_defaults.filename);
     }
     else
@@ -1931,8 +1933,11 @@ void M_LoadDefaults (void)
             = M_StringJoin(configdir, default_extra_config, NULL);
     }
 
+    serial_write_string("[M_LoadDefaults] Calling LoadDefaultCollection\n");
     LoadDefaultCollection(&doom_defaults);
     LoadDefaultCollection(&extra_defaults);
+    serial_write_string("[M_LoadDefaults] LoadDefaultCollection complete\n");
+    serial_write_string("[M_LoadDefaults] Returning\n");
 }
 
 // Get a configuration file variable by its name
@@ -1940,6 +1945,12 @@ void M_LoadDefaults (void)
 static default_t *GetDefaultForName(char *name)
 {
     default_t *result;
+
+    // Check for empty or NULL name
+    if (name == NULL || *name == '\0') {
+        serial_write_string("[GetDefaultForName] Empty variable name, returning NULL\n");
+        return NULL;
+    }
 
     // Try the main list and the extras
 
@@ -1954,6 +1965,9 @@ static default_t *GetDefaultForName(char *name)
 
     if (result == NULL)
     {
+        serial_write_string("[M_GetVariable] Unknown config variable: ");
+        serial_write_string(name);
+        serial_write_string("\n");
         I_Error("Unknown configuration variable: '%s'", name);
     }
 

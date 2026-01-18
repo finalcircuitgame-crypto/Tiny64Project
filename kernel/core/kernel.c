@@ -3,6 +3,7 @@
 #include "../include/fs.h"
 #include "../include/keyboard.h"
 #include "../include/ttf.h"
+#include "../include/doomgeneric.h"
 #include "../graphics/inter_font_data.h"
 #include "../drivers/usb.h"
 #include "../drivers/rtl8139.h"
@@ -481,6 +482,14 @@ void enter_graphics_mode(BootInfo *info) {
 
   kprint(info, "[    ] Filesystem", 50, 300, 0xFFFFFF00);
   serial_write_string("[BOOT] About to call fs_init()\n");
+  
+  // Initialize memory first
+  serial_write_string("[BOOT] Initializing memory heap...\n");
+  extern void init_heap(void);
+  init_heap();
+  serial_write_string("[BOOT] Memory heap initialized\n");
+  
+  // Now initialize filesystem
   fs_init();
   serial_write_string("[BOOT] fs_init() completed\n");
   kprint(info, "[OK] Virtual Filesystem (2 files)", 50, 300, 0xFF00FF00);
@@ -1072,9 +1081,9 @@ boot_timeout:
                   kprint_auto(info, "Testing embedded WAD data...", prompt_x, term_y, 0xFFFFFF00);
                   term_y += line_height;
 
-                  FILE* test_file = fopen("doom1.wad", "rb");
+                  FILE* test_file = fopen("doom.wad", "rb");
                   if (test_file) {
-                    kprint_auto(info, "SUCCESS: doom1.wad found!", prompt_x, term_y, 0xFF00FF00);
+                    kprint_auto(info, "SUCCESS: doom.wad found!", prompt_x, term_y, 0xFF00FF00);
                     term_y += line_height;
                     // Get file size
                     fseek(test_file, 0, SEEK_END);
@@ -1086,12 +1095,15 @@ boot_timeout:
                     term_y += line_height;
                     fclose(test_file);
                   } else {
-                    kprint_auto(info, "FAILED: doom1.wad not found", prompt_x, term_y, 0xFFFF0000);
+                    kprint_auto(info, "FAILED: doom.wad not found", prompt_x, term_y, 0xFFFF0000);
                     term_y += line_height;
 
                     // Check embedded WAD function
                     size_t wad_size;
-                    const uint8_t* wad_data = get_doom1_wad_data(&wad_size);
+                    __attribute__((weak)) extern const uint8_t _binary_doom_wad_start[];
+                    __attribute__((weak)) extern const size_t _binary_doom_wad_size;
+                    const uint8_t* wad_data = _binary_doom_wad_start;
+                    wad_size = _binary_doom_wad_size;
                     if (wad_data != NULL && wad_size > 0) {
                       char size_buf[64];
                       sprintf(size_buf, "WAD found! Size: %zu bytes", wad_size);
@@ -1120,14 +1132,14 @@ boot_timeout:
                   flip_buffers(info);
 
                   // Try to open embedded WAD files
-                  FILE* wad_test = fopen("doom1.wad", "rb");
+                  FILE* wad_test = fopen("doom.wad", "rb");
                   if (wad_test) {
-                    kprint_auto(info, "doom1.wad found in embedded data!", prompt_x, term_y, 0xFF00FF00);
+                    kprint_auto(info, "doom.wad found in embedded data!", prompt_x, term_y, 0xFF00FF00);
                     term_y += line_height;
                   } else {
-                    kprint_auto(info, "doom1.wad not found, trying doom.wad...", prompt_x, term_y, 0xFFFFFF00);
+                    kprint_auto(info, "doom.wad not found, trying doom1.wad...", prompt_x, term_y, 0xFFFFFF00);
                     term_y += line_height;
-                    wad_test = fopen("doom.wad", "rb");
+                    wad_test = fopen("doom1.wad", "rb");
                     if (wad_test) {
                       kprint_auto(info, "doom.wad found in embedded data!", prompt_x, term_y, 0xFF00FF00);
                       term_y += line_height;
@@ -1182,17 +1194,24 @@ boot_timeout:
                   DG_SetWindowPosition(doom_window_x, doom_window_y);
 
                   // Initialize Doom with windowed rendering
-                  char* doom_args[] = {"doom", "-iwad", "doom1.wad"};
+                  char* doom_args[] = {"doom", "-iwad", "doom.wad"};
                   doomgeneric_SetBootInfo(info);
                   doomgeneric_Create(3, doom_args);
+                  
+                  // Initialize Doom's main code (this does WAD loading, etc.)
+                  extern void doomgeneric_InitMain(void);
+                  doomgeneric_InitMain();
 
                   // Main Doom loop with windowed rendering
                   while (1) {
                       doomgeneric_Tick();
 
+                      // Draw Doom frame to framebuffer
+                      DG_DrawFrame();
+
                       // Re-draw terminal window on top (to keep it visible)
                       draw_terminal_window(info, tw_x, tw_y, tw_w, tw_h);
-                      kprint_auto(info, "Tiny64 Terminal v1.0", tw_x + 35, tw_y + 15, 0xFF000000);
+                      kprint_auto(info, "Tiny6 Terminal v1.0", tw_x + 35, tw_y + 15, 0xFF000000);
                       kprint_auto(info, "Type 'help' for available commands", tw_x + 35, tw_y + 35, 0xFF333333);
                       draw_char_scaled(info, '>', prompt_x, prompt_y, 0xFF00AA00, scale);
 

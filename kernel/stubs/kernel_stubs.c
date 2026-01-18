@@ -105,10 +105,241 @@ int mkdir(const char *path, ...) { return -1; }
 // --- I/O stubs ---
 void *stdout = 0;
 void *stderr = 0;
-int vfprintf(void *stream, const char *fmt, va_list ap) { return 0; }
+
+// Helper functions for vfprintf
+static void int_to_str(long value, char* str, int base) {
+    static const char digits[] = "0123456789abcdef";
+    int i = 0;
+    int is_negative = 0;
+
+    if (value < 0 && base == 10) {
+        is_negative = 1;
+        value = -value;
+    }
+
+    if (value == 0) {
+        str[i++] = '0';
+    } else {
+        while (value > 0) {
+            str[i++] = digits[value % base];
+            value /= base;
+        }
+    }
+
+    if (is_negative) {
+        str[i++] = '-';
+    }
+
+    str[i] = '\0';
+
+    // Reverse the string
+    int len = i;
+    for (int j = 0; j < len / 2; j++) {
+        char temp = str[j];
+        str[j] = str[len - 1 - j];
+        str[len - 1 - j] = temp;
+    }
+}
+
+static void uint_to_str(unsigned long value, char* str, int base) {
+    static const char digits[] = "0123456789abcdef";
+    int i = 0;
+
+    if (value == 0) {
+        str[i++] = '0';
+    } else {
+        while (value > 0) {
+            str[i++] = digits[value % base];
+            value /= base;
+        }
+    }
+
+    str[i] = '\0';
+
+    // Reverse the string
+    int len = i;
+    for (int j = 0; j < len / 2; j++) {
+        char temp = str[j];
+        str[j] = str[len - 1 - j];
+        str[len - 1 - j] = temp;
+    }
+}
+
+int vfprintf(void *stream, const char *fmt, va_list ap) {
+    extern void serial_write_string(const char* str);
+    int count = 0;
+
+    while (*fmt) {
+        if (*fmt == '%') {
+            fmt++;
+            switch (*fmt) {
+                case 's': {
+                    char* str = va_arg(ap, char*);
+                    if (str) {
+                        serial_write_string(str);
+                        count += strlen(str);
+                    } else {
+                        serial_write_string("(null)");
+                        count += 6;
+                    }
+                    break;
+                }
+                case 'd':
+                case 'i': {
+                    int value = va_arg(ap, int);
+                    char buffer[32];
+                    int_to_str(value, buffer, 10);
+                    serial_write_string(buffer);
+                    count += strlen(buffer);
+                    break;
+                }
+                case 'u': {
+                    unsigned int value = va_arg(ap, unsigned int);
+                    char buffer[32];
+                    uint_to_str(value, buffer, 10);
+                    serial_write_string(buffer);
+                    count += strlen(buffer);
+                    break;
+                }
+                case 'x': {
+                    unsigned int value = va_arg(ap, unsigned int);
+                    char buffer[32];
+                    uint_to_str(value, buffer, 16);
+                    serial_write_string(buffer);
+                    count += strlen(buffer);
+                    break;
+                }
+                case 'p': {
+                    void* ptr = va_arg(ap, void*);
+                    char buffer[32];
+                    if (ptr == NULL) {
+                        serial_write_string("(nil)");
+                        count += 5;
+                    } else {
+                        uint_to_str((unsigned long)(uintptr_t)ptr, buffer, 16);
+                        serial_write_string("0x");
+                        serial_write_string(buffer);
+                        count += strlen(buffer) + 2;
+                    }
+                    break;
+                }
+                case 'c': {
+                    int value = va_arg(ap, int);
+                    char buf[2] = {value, 0};
+                    serial_write_string(buf);
+                    count++;
+                    break;
+                }
+                case '%': {
+                    serial_write_string("%");
+                    count++;
+                    break;
+                }
+                default: {
+                    char buf[3] = {'%', *fmt, 0};
+                    serial_write_string(buf);
+                    count += 2;
+                    break;
+                }
+            }
+            fmt++;
+        } else {
+            char buf[2] = {*fmt, 0};
+            serial_write_string(buf);
+            count++;
+            fmt++;
+        }
+    }
+
+    return count;
+}
+
 int vsnprintf(char *str, size_t size, const char *fmt, va_list ap) {
-    if (size > 0) str[0] = 0;
-    return 0;
+    int count = 0;
+    
+    if (size == 0) return 0;
+    
+    while (*fmt && count < (int)size - 1) {
+        if (*fmt == '%') {
+            fmt++;
+            switch (*fmt) {
+                case 's': {
+                    char* s = va_arg(ap, char*);
+                    if (s) {
+                        while (*s && count < (int)size - 1) {
+                            *str++ = *s++;
+                            count++;
+                        }
+                    }
+                    break;
+                }
+                case 'd':
+                case 'i': {
+                    int val = va_arg(ap, int);
+                    char buf[32];
+                    int_to_str(val, buf, 10);
+                    char* p = buf;
+                    while (*p && count < (int)size - 1) {
+                        *str++ = *p++;
+                        count++;
+                    }
+                    break;
+                }
+                case 'u': {
+                    unsigned int val = va_arg(ap, unsigned int);
+                    char buf[32];
+                    uint_to_str(val, buf, 10);
+                    char* p = buf;
+                    while (*p && count < (int)size - 1) {
+                        *str++ = *p++;
+                        count++;
+                    }
+                    break;
+                }
+                case 'x': {
+                    unsigned int val = va_arg(ap, unsigned int);
+                    char buf[32];
+                    uint_to_str(val, buf, 16);
+                    char* p = buf;
+                    while (*p && count < (int)size - 1) {
+                        *str++ = *p++;
+                        count++;
+                    }
+                    break;
+                }
+                case 'c': {
+                    char c = va_arg(ap, int);
+                    if (count < (int)size - 1) {
+                        *str++ = c;
+                        count++;
+                    }
+                    break;
+                }
+                case '%': {
+                    if (count < (int)size - 1) {
+                        *str++ = '%';
+                        count++;
+                    }
+                    break;
+                }
+                default:
+                    // Unknown format specifier, just copy it
+                    if (count < (int)size - 2) {
+                        *str++ = '%';
+                        *str++ = *fmt;
+                        count += 2;
+                    }
+                    break;
+            }
+            fmt++;
+        } else {
+            *str++ = *fmt++;
+            count++;
+        }
+    }
+    
+    *str = '\0';
+    return count;
 }
 
 // --- strtol stub ---

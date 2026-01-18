@@ -456,7 +456,9 @@ void D_DoomLoop (void)
         wipegamestate = gamestate;
     }
 
-    doomgeneric_Tick();
+    // Don't call doomgeneric_Tick() here - it will be called by the external loop
+    // The external code will call doomgeneric_Tick() repeatedly
+    // doomgeneric_Tick();
 }
 
 
@@ -1360,8 +1362,12 @@ void D_DoomMain (void)
     D_BindVariables();
     M_LoadDefaults();
 
+    serial_write_string("[d_main] M_LoadDefaults returned\n");
+
     // Save configuration at exit.
     I_AtExit(M_SaveDefaults, false);
+
+    serial_write_string("[d_main] I_AtExit returned\n");
 
     // Find main IWAD file and load it.
     iwadfile = D_FindIWAD(IWAD_MASK_DOOM, &gamemission);

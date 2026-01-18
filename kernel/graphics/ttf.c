@@ -1,4 +1,4 @@
-#include "../include/kernel.h"
+﻿#include "../include/kernel.h"
 #include "../include/fs.h"
 #include "../include/string.h"
 #include "../include/ttf.h"
@@ -261,6 +261,85 @@ int ttf_parse_font(ttf_font_t *font) {
         }
     }
 
+    // Parse loca table (glyph locations)
+    ttf_table_directory_t *loca_table_dir = ttf_find_table(font, 0x6c6f6361); // 'loca'
+    if (!loca_table_dir) {
+        serial_write_string("[TTF] Required table 'loca' not found\n");
+        goto error;
+    }
+
+    // Parse hmtx table (horizontal metrics)
+    ttf_table_directory_t *hmtx_table_dir = ttf_find_table(font, 0x686d7478); // 'hmtx'
+    if (!hmtx_table_dir) {
+        serial_write_string("[TTF] Required table 'hmtx' not found\n");
+        goto error;
+    }
+
+    // Parse maxp table (maximum profile) to get num_glyphs
+    ttf_table_directory_t *maxp_table_dir = ttf_find_table(font, 0x6d617870); // 'maxp'
+    if (maxp_table_dir) {
+        const uint8_t *maxp_data = font->font_data + maxp_table_dir->offset;
+        font->num_glyphs = read_uint16_be(maxp_data + 4); // numGlyphs at offset 4
+    } else {
+        font->num_glyphs = 256; // Fallback
+    }
+
+    // Read loca table
+    uint32_t loca_size = (font->num_glyphs + 1) * (font->head_table->index_to_loc_format == 0 ? 2 : 4);
+    if (loca_table_dir->offset + loca_size > font->font_size) {
+        serial_write_string("[TTF] Loca table out of bounds\n");
+        goto error;
+    }
+
+    font->loca_table = kmalloc((font->num_glyphs + 1) * sizeof(uint32_t));
+    if (!font->loca_table) {
+        serial_write_string("[TTF] Failed to allocate loca table\n");
+        goto error;
+    }
+
+    const uint8_t *loca_data = font->font_data + loca_table_dir->offset;
+    if (font->head_table->index_to_loc_format == 0) {
+        // Short format (offsets are 16-bit, multiplied by 2)
+        for (uint16_t i = 0; i <= font->num_glyphs; i++) {
+            font->loca_table[i] = read_uint16_be(loca_data + i * 2) * 2;
+        }
+    } else {
+        // Long format (offsets are 32-bit)
+        for (uint16_t i = 0; i <= font->num_glyphs; i++) {
+            font->loca_table[i] = read_uint32_be(loca_data + i * 4);
+        }
+    }
+
+    // Read hmtx table
+    uint16_t num_long_metrics = hmtx_table_dir->length / 4;
+    if (num_long_metrics > font->num_glyphs) {
+        num_long_metrics = font->num_glyphs;
+    }
+
+    font->hmtx_table = kmalloc(num_long_metrics * sizeof(ttf_long_hor_metric_t));
+    if (!font->hmtx_table) {
+        serial_write_string("[TTF] Failed to allocate hmtx table\n");
+        goto error;
+    }
+
+    const uint8_t *hmtx_data = font->font_data + hmtx_table_dir->offset;
+    for (uint16_t i = 0; i < num_long_metrics; i++) {
+        font->hmtx_table[i].advance_width = read_uint16_be(hmtx_data + i * 4);
+        font->hmtx_table[i].left_side_bearing = read_int16_be(hmtx_data + i * 4 + 2);
+    }
+
+    // Read left side bearings for remaining glyphs
+    if (font->num_glyphs > num_long_metrics) {
+        font->hmtx_left_side_bearings = kmalloc((font->num_glyphs - num_long_metrics) * sizeof(int16_t));
+        if (!font->hmtx_left_side_bearings) {
+            serial_write_string("[TTF] Failed to allocate hmtx left side bearings\n");
+            goto error;
+        }
+        for (uint16_t i = num_long_metrics; i < font->num_glyphs; i++) {
+            font->hmtx_left_side_bearings[i - num_long_metrics] = read_int16_be(hmtx_data + num_long_metrics * 4 + (i - num_long_metrics) * 2);
+        }
+    }
+
     serial_write_string("[TTF] Font loaded successfully - units per em: ");
     char upem_str[8] = "00000";
     int temp_upem = font->units_per_em;
@@ -287,6 +366,9 @@ error:
         if (font->cmap_format4->glyph_id_array) kfree(font->cmap_format4->glyph_id_array);
         kfree(font->cmap_format4);
     }
+    if (font->loca_table) kfree(font->loca_table);
+    if (font->hmtx_table) kfree(font->hmtx_table);
+    if (font->hmtx_left_side_bearings) kfree(font->hmtx_left_side_bearings);
     if (font->font_data) kfree(font->font_data);
     return -1;
 }
@@ -334,6 +416,10 @@ void ttf_free_font(ttf_font_t *font) {
         kfree(font->cmap_format4);
     }
 
+    if (font->loca_table) kfree(font->loca_table);
+    if (font->hmtx_table) kfree(font->hmtx_table);
+    if (font->hmtx_left_side_bearings) kfree(font->hmtx_left_side_bearings);
+
     if (font->head_table) kfree(font->head_table);
     if (font->table_directory) kfree(font->table_directory);
     if (font->font_data) kfree(font->font_data);
@@ -341,7 +427,6 @@ void ttf_free_font(ttf_font_t *font) {
     memset(font, 0, sizeof(ttf_font_t));
 }
 
-// Placeholder implementations - will be implemented next
 int ttf_get_glyph_index(ttf_font_t *font, uint32_t codepoint) {
     if (!font || !font->cmap_format4 || codepoint > 0xFFFF) {
         return 0; // Missing glyph
@@ -393,13 +478,253 @@ int ttf_get_glyph_index(ttf_font_t *font, uint32_t codepoint) {
     }
 }
 
+// Parse glyph outline from glyf table
+static int ttf_parse_glyph_outline(ttf_font_t *font, uint16_t glyph_index, ttf_glyph_outline_t *outline) {
+    if (!font || !outline || glyph_index >= font->num_glyphs) {
+        return -1;
+    }
+
+    // Get glyph offset from loca table
+    uint32_t offset = font->loca_table[glyph_index];
+    uint32_t next_offset = font->loca_table[glyph_index + 1];
+
+    if (offset == next_offset) {
+        // Empty glyph (whitespace)
+        outline->num_points = 0;
+        outline->num_contours = 0;
+        outline->points = NULL;
+        outline->contours = NULL;
+        return 0;
+    }
+
+    // Find glyf table
+    ttf_table_directory_t *glyf_table_dir = ttf_find_table(font, 0x676c7966); // 'glyf'
+    if (!glyf_table_dir) {
+        return -1;
+    }
+
+    const uint8_t *glyf_data = font->font_data + glyf_table_dir->offset + offset;
+
+    // Read glyph header
+    int16_t num_contours = read_int16_be(glyf_data);
+    outline->num_contours = num_contours;
+
+    if (num_contours < 0) {
+        // Compound glyph - not implemented, return empty
+        outline->num_points = 0;
+        outline->points = NULL;
+        outline->contours = NULL;
+        return 0;
+    }
+
+    // Read contour end points
+    outline->contours = kmalloc(num_contours * sizeof(uint16_t));
+    if (!outline->contours) {
+        return -1;
+    }
+
+    for (int i = 0; i < num_contours; i++) {
+        outline->contours[i] = read_uint16_be(glyf_data + 10 + i * 2);
+    }
+
+    // Get number of points from last contour
+    outline->num_points = outline->contours[num_contours - 1] + 1;
+
+    // Read instructions (skip for now)
+    uint16_t num_instructions = read_uint16_be(glyf_data + 10 + num_contours * 2);
+    uint16_t flags_offset = 10 + num_contours * 2 + 2 + num_instructions;
+
+    // Read flags
+    outline->points = kmalloc(outline->num_points * sizeof(ttf_point_t));
+    if (!outline->points) {
+        kfree(outline->contours);
+        outline->contours = NULL;
+        return -1;
+    }
+
+    // Parse flags and coordinates
+    uint16_t point_index = 0;
+    uint16_t coord_offset = flags_offset;
+
+    while (point_index < outline->num_points) {
+        uint8_t flag = glyf_data[coord_offset++];
+        uint8_t repeat = 1;
+
+        if (flag & 0x08) {
+            repeat = glyf_data[coord_offset++] + 1;
+        }
+
+        for (uint8_t r = 0; r < repeat && point_index < outline->num_points; r++) {
+            outline->points[point_index].on_curve = (flag & 0x01) ? 1 : 0;
+            point_index++;
+        }
+    }
+
+    // Read x coordinates
+    point_index = 0;
+    int32_t x = 0;
+    while (point_index < outline->num_points) {
+        uint8_t flag = glyf_data[flags_offset++];
+        uint8_t repeat = 1;
+        if (flag & 0x08) {
+            repeat = glyf_data[flags_offset++] + 1;
+            flags_offset--; // Will be incremented again
+        }
+
+        for (uint8_t r = 0; r < repeat && point_index < outline->num_points; r++) {
+            if (flag & 0x02) {
+                // 1-byte delta
+                x += (flag & 0x10) ? glyf_data[coord_offset++] : -glyf_data[coord_offset++];
+            } else if (!(flag & 0x10)) {
+                // 2-byte delta
+                x += read_int16_be(glyf_data + coord_offset);
+                coord_offset += 2;
+            }
+            outline->points[point_index].x = x;
+            point_index++;
+        }
+
+        if (flag & 0x08) {
+            flags_offset++; // Skip repeat count
+        }
+    }
+
+    // Read y coordinates
+    point_index = 0;
+    int32_t y = 0;
+    while (point_index < outline->num_points) {
+        uint8_t flag = glyf_data[flags_offset++];
+        uint8_t repeat = 1;
+        if (flag & 0x08) {
+            repeat = glyf_data[flags_offset++] + 1;
+            flags_offset--;
+        }
+
+        for (uint8_t r = 0; r < repeat && point_index < outline->num_points; r++) {
+            if (flag & 0x04) {
+                // 1-byte delta
+                y += (flag & 0x20) ? glyf_data[coord_offset++] : -glyf_data[coord_offset++];
+            } else if (!(flag & 0x20)) {
+                // 2-byte delta
+                y += read_int16_be(glyf_data + coord_offset);
+                coord_offset += 2;
+            }
+            outline->points[point_index].y = y;
+            point_index++;
+        }
+
+        if (flag & 0x08) {
+            flags_offset++;
+        }
+    }
+
+    return 0;
+}
+
+// Free glyph outline
+static void ttf_free_outline(ttf_glyph_outline_t *outline) {
+    if (!outline) return;
+    if (outline->points) kfree(outline->points);
+    if (outline->contours) kfree(outline->contours);
+    outline->points = NULL;
+    outline->contours = NULL;
+    outline->num_points = 0;
+    outline->num_contours = 0;
+}
+
+// Scanline rasterizer - convert outline to bitmap
+static void ttf_rasterize_outline(ttf_glyph_outline_t *outline, uint8_t *bitmap, int width, int height, int32_t x_offset, int32_t y_offset, float scale) {
+    if (!outline || !bitmap || outline->num_points == 0 || outline->num_contours == 0) {
+        return;
+    }
+
+    // Clear bitmap
+    memset(bitmap, 0, width * height);
+
+    // Scale and translate points
+    ttf_point_t *scaled_points = kmalloc(outline->num_points * sizeof(ttf_point_t));
+    if (!scaled_points) return;
+
+    for (int i = 0; i < outline->num_points; i++) {
+        scaled_points[i].x = (int32_t)(outline->points[i].x * scale) + x_offset;
+        scaled_points[i].y = (int32_t)(outline->points[i].y * scale) + y_offset;
+        scaled_points[i].on_curve = outline->points[i].on_curve;
+    }
+
+    // Process each contour
+    int point_start = 0;
+    for (int c = 0; c < outline->num_contours; c++) {
+        int point_end = outline->contours[c];
+        int num_points = point_end - point_start + 1;
+
+        // Draw edges between consecutive points
+        for (int i = 0; i < num_points; i++) {
+            int p1_idx = point_start + i;
+            int p2_idx = point_start + ((i + 1) % num_points);
+
+            ttf_point_t p1 = scaled_points[p1_idx];
+            ttf_point_t p2 = scaled_points[p2_idx];
+
+            // Bresenham line algorithm
+            int dx = abs(p2.x - p1.x);
+            int dy = abs(p2.y - p1.y);
+            int sx = (p1.x < p2.x) ? 1 : -1;
+            int sy = (p1.y < p2.y) ? 1 : -1;
+            int err = dx - dy;
+
+            int x = p1.x;
+            int y = p1.y;
+
+            while (1) {
+                if (x >= 0 && x < width && y >= 0 && y < height) {
+                    bitmap[y * width + x] = 255;
+                }
+
+                if (x == p2.x && y == p2.y) break;
+
+                int e2 = 2 * err;
+                if (e2 > -dy) { err -= dy; x += sx; }
+                if (e2 < dx) { err += dx; y += sy; }
+            }
+        }
+
+        point_start = point_end + 1;
+    }
+
+    kfree(scaled_points);
+}
+
+// Simple fill algorithm for glyph bitmap
+static void ttf_fill_glyph(uint8_t *bitmap, int width, int height) {
+    // Scanline fill - for each row, fill between leftmost and rightmost set pixels
+    for (int y = 0; y < height; y++) {
+        int left = -1;
+        int right = -1;
+
+        // Find leftmost and rightmost pixels
+        for (int x = 0; x < width; x++) {
+            if (bitmap[y * width + x]) {
+                if (left == -1) left = x;
+                right = x;
+            }
+        }
+
+        // Fill between them
+        if (left != -1 && right != -1) {
+            for (int x = left; x <= right; x++) {
+                bitmap[y * width + x] = 255;
+            }
+        }
+    }
+}
+
 // Simple hash function for glyph cache
 static uint32_t glyph_hash(uint16_t glyph_index) {
     return glyph_index % GLYPH_CACHE_SIZE;
 }
 
 int ttf_render_glyph(ttf_font_t *font, uint16_t glyph_index, uint8_t *bitmap, int width, int height, int x, int y, int pixel_size) {
-    if (!font || !bitmap || width <= 0 || height <= 0 || width > 64 || height > 64) {
+    if (!font || !bitmap || width <= 0 || height <= 0) {
         return -1;
     }
 
@@ -414,7 +739,6 @@ int ttf_render_glyph(ttf_font_t *font, uint16_t glyph_index, uint8_t *bitmap, in
         font->glyph_cache[cache_index].glyph_index == glyph_index &&
         font->glyph_cache[cache_index].width == width &&
         font->glyph_cache[cache_index].height == height) {
-
         // Copy from cache
         memcpy(bitmap, font->glyph_cache[cache_index].bitmap, width * height);
         return 0;
@@ -423,66 +747,63 @@ int ttf_render_glyph(ttf_font_t *font, uint16_t glyph_index, uint8_t *bitmap, in
     // Clear the bitmap area
     memset(bitmap, 0, width * height);
 
-    // Create a simple pattern based on glyph index
-    // This is a placeholder - real implementation would parse glyf table
-    int center_x = width / 2;
-    int center_y = height / 2;
-
-    // Draw bolder, better-aligned glyphs
-    if (glyph_index == ' ') {
-        // Space - empty
-    } else if (glyph_index == 'H') {
-        // H - vertical lines with horizontal connector
+    // Parse glyph outline
+    ttf_glyph_outline_t outline;
+    if (ttf_parse_glyph_outline(font, glyph_index, &outline) != 0) {
+        // Fallback to simple pattern if parsing fails
+        int center_x = width / 2;
+        int center_y = height / 2;
         for (int i = 1; i < height - 1; i++) {
-            bitmap[i * width + 2] = 255;  // Left vertical
-            bitmap[i * width + width - 3] = 255;  // Right vertical
-            if (i == center_y - 1 || i == center_y || i == center_y + 1) {
-                bitmap[i * width + center_x - 1] = 255;  // Horizontal connector
-                bitmap[i * width + center_x] = 255;
-                bitmap[i * width + center_x + 1] = 255;
-            }
-        }
-    } else if (glyph_index == 'e') {
-        // e - curved shape
-        for (int i = 2; i < width - 2; i++) {
-            bitmap[center_y * width + i] = 255;  // Middle horizontal
-            if (i >= center_x - 2) {
-                bitmap[(center_y + 1) * width + i] = 255;  // Bottom curve
-            }
-        }
-        for (int i = center_y - 1; i <= center_y + 1; i++) {
-            bitmap[i * width + 2] = 255;  // Left vertical
-        }
-    } else if (glyph_index == 'l') {
-        // l - simple vertical line
-        for (int i = 2; i < height - 2; i++) {
             bitmap[i * width + center_x] = 255;
-            bitmap[i * width + center_x + 1] = 255;  // Make it bolder
         }
-    } else if (glyph_index == 'o') {
-        // o - circle/oval shape
-        for (int i = center_y - 2; i <= center_y + 2; i++) {
-            for (int j = center_x - 2; j <= center_x + 2; j++) {
-                if ((i - center_y) * (i - center_y) + (j - center_x) * (j - center_x) <= 6) {
-                    bitmap[i * width + j] = 255;
-                }
-            }
-        }
-    } else {
-        // Default: draw a bolder block pattern
-        int block_size = width / 3;
-        for (int by = 0; by < 3; by++) {
-            for (int bx = 0; bx < 3; bx++) {
-                if ((glyph_index + by * 3 + bx) % 2 == 0) {
-                    for (int i = by * block_size; i < (by + 1) * block_size && i < height; i++) {
-                        for (int j = bx * block_size; j < (bx + 1) * block_size && j < width; j++) {
-                            bitmap[i * width + j] = 255;
-                        }
-                    }
-                }
-            }
-        }
+        return 0;
     }
+
+    if (outline.num_points == 0) {
+        // Empty glyph (whitespace)
+        ttf_free_outline(&outline);
+        return 0;
+    }
+
+    // Calculate scale to fit glyph in bitmap
+    // Find bounding box
+    int32_t min_x = outline.points[0].x;
+    int32_t max_x = outline.points[0].x;
+    int32_t min_y = outline.points[0].y;
+    int32_t max_y = outline.points[0].y;
+
+    for (int i = 1; i < outline.num_points; i++) {
+        if (outline.points[i].x < min_x) min_x = outline.points[i].x;
+        if (outline.points[i].x > max_x) max_x = outline.points[i].x;
+        if (outline.points[i].y < min_y) min_y = outline.points[i].y;
+        if (outline.points[i].y > max_y) max_y = outline.points[i].y;
+    }
+
+    int glyph_width = max_x - min_x;
+    int glyph_height = max_y - min_y;
+
+    // Calculate scale
+    float scale_x = (float)(width - 2) / (float)(glyph_width + 1);
+    float scale_y = (float)(height - 2) / (float)(glyph_height + 1);
+    float scale = (scale_x < scale_y) ? scale_x : scale_y;
+
+    if (scale < 0.1f) scale = 0.1f;
+    if (scale > 10.0f) scale = 10.0f;
+
+    // Center the glyph
+    int32_t scaled_width = (int32_t)(glyph_width * scale);
+    int32_t scaled_height = (int32_t)(glyph_height * scale);
+    int32_t x_offset = (width - scaled_width) / 2 - (int32_t)(min_x * scale);
+    int32_t y_offset = (height - scaled_height) / 2 - (int32_t)(min_y * scale);
+
+    // Rasterize outline
+    ttf_rasterize_outline(&outline, bitmap, width, height, x_offset, y_offset, scale);
+
+    // Fill the glyph
+    ttf_fill_glyph(bitmap, width, height);
+
+    // Free outline
+    ttf_free_outline(&outline);
 
     // Cache the rendered glyph
     font->glyph_cache[cache_index].glyph_index = glyph_index;

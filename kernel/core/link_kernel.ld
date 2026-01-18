@@ -20,6 +20,6 @@ SECTIONS {
     /* mark kernel end for external checks */
     __kernel_end = .;
 }
-/* Ensure kernel fits within the bootloader-provided 8MB region (0x100000-0x8FFFFF).
+/* Ensure kernel fits within the bootloader-provided 16MB region (0x100000-0x10FFFFF).
    If this ASSERT trips during linking, reduce kernel size or increase bootloader allocation. */
-ASSERT(__kernel_end <= 0x800000, "Kernel too large; must be <= 0x800000 (8MB).");
+ASSERT(__kernel_end <= 0x1000000, "Kernel too large; must be <= 0x1000000 (16MB).");

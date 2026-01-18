@@ -184,8 +184,14 @@ EFI_STATUS EFIAPI EfiMain(EFI_HANDLE ImageHandle,
   /* 3. Allocate and Load at 1MB */
   update_boot_progress(gop, "Allocating memory for kernel...", 50);
   EFI_PHYSICAL_ADDRESS kernelBase = 0x100000;
-  UINTN pages = 512;
+  UINTN pages = 4096;  // 16MB to accommodate embedded doom.wad file (11.1MB) + kernel code
   gBS->AllocatePages(AllocateAddress, EfiLoaderData, pages, &kernelBase);
+  
+  // Check if allocation succeeded
+  if (kernelBase == 0) {
+    print(gop, L"ERROR: Failed to allocate kernel memory\r\n");
+    return EFI_OUT_OF_RESOURCES;
+  }
 
   update_boot_progress(gop, "Loading kernel into memory...", 70);
   UINTN kernelSize = pages * 4096;

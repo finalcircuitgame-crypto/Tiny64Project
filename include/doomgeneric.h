@@ -12,6 +12,7 @@
 #define DOOMGENERIC_RESY 400
 #endif  // DOOMGENERIC_RESY
 
+const uint8_t* get_doom1_wad_data(size_t* out_size);
 
 #ifdef CMAP256
 
@@ -31,6 +32,7 @@ extern "C" {
 #endif
 
 void doomgeneric_Create(int argc, char **argv);
+void doomgeneric_InitMain(void);
 void doomgeneric_Tick();
 
 
