@@ -189,7 +189,7 @@ EFI_STATUS EFIAPI EfiMain(EFI_HANDLE ImageHandle,
   
   // Check if allocation succeeded
   if (kernelBase == 0) {
-    print(gop, L"ERROR: Failed to allocate kernel memory\r\n");
+    // print removed
     return EFI_OUT_OF_RESOURCES;
   }
 
